@@ -10,6 +10,8 @@ import random
 import numpy as np
 import config as cg
 import math
+
+
 # import pytest
 
 
@@ -28,6 +30,7 @@ class BeautifulSmap():
         If modified, the source file will be overwritten.Then the file will be closed
         """
         if self.write_flag:
+            self.file.truncate(0)
             json_m = json.dumps(self.data)
             json_m = json_m.encode('utf-8')
             self.file.write(json_m)
@@ -35,7 +38,7 @@ class BeautifulSmap():
         self.file.close()
 
     def __str__(self):
-        return json.dumps(self.data,indent=4)
+        return str(self.data)
 
     @property
     def data(self):
@@ -74,7 +77,18 @@ class BeautifulSmap():
             colors.append(rgb)
         return colors
 
-    def get_vertex_by_name(self, names: list):
+    @staticmethod
+    def _ordered_sample(data_list: list, k: int):
+        """在有序序列中随机选出长度为k的有序子集
+        :param data_list: 有序序列
+        :param k: 子集长度
+        :return 有序子集
+        """
+        indices = random.sample(range(len(data_list)), k)
+        sample = [data_list[i] for i in sorted(indices)]
+        return sample
+
+    def get_pos_by_name(self, names: list):
         """通过名字获取点位信息
         :param names: 点位名称表
         :return json：{name：{坐标：（），朝向：，随动：}}
@@ -94,10 +108,10 @@ class BeautifulSmap():
                     rlt[pos['instanceName']].setdefault(p['key'], p['boolValue'])
         return rlt
 
-    def _get_vertex_index_by_name(self, names: list):
+    def _get_pos_index_by_name(self, names: list):
         """通过点为名获取点位索引
         :param names: 点位名称表
-        :return json: [index,...] , index= -1 代表未找到
+        :return json: [i1,i2,...] , index= -1 代表未找到
         """
         if isinstance(names, str):
             names = [names]
@@ -107,12 +121,22 @@ class BeautifulSmap():
                 rlt[names.index(pos['instanceName'])] = i
         return rlt
 
-    def get_vertex_index_from_enclosure(self, rect: tuple = None, prefix:str=""):
+    def _get_path_index_by_name(self,names: list):
+        """"""
+        if isinstance(names, str):
+            names = [names]
+        rlt = [-1 for _ in names]
+        for i, pos in enumerate(self.data.get("advancedCurveList")):
+            if pos['instanceName'] in names:
+                rlt[names.index(pos['instanceName'])] = i
+        return rlt
+
+    def _get_pos_index_from_enclosure(self, rect: list = None, prefix: str = ""):
         """
         获取矩形区域的所有点位, 返回索引序列
         :param rect: (-x,x,-y,y)
         :param prefix: 点位前缀,做筛选用
-        :return 点位索引列表
+        :return [i1,i2,i3,i4,...]
         """
         indexlist = []
         for i in range(len(self.data.get("advancedPointList"))):
@@ -124,7 +148,7 @@ class BeautifulSmap():
                     indexlist.append(i)
         return indexlist
 
-    def get_vertex_from_enclosure(self, rect: tuple = None, prefix=None):
+    def get_pos_from_enclosure(self, rect: list = None, prefix=None):
         """获取矩形区域的所有点位, 点位为LM，AP，PP，CP，SM，不包含库位
         :param rect: (-x,x,-y,y)
         :param prefix: 点位前缀,做筛选用
@@ -140,14 +164,14 @@ class BeautifulSmap():
                     namelist.append(pos["instanceName"])
         return namelist
 
-    def _get_path_index_from_enclosure(self, rect: tuple = None, prefix=None):
+    def _get_path_index_from_enclosure(self, rect: list = None, prefix=None):
         """获取矩形区域的所有线路, 只要起点和终点都在矩形区域内则视为线路在矩形区域内, 返回索引序列
         :param rect: (-x,x,-y,y)
         :param prefix: 点位前缀,做筛选用
         :return 索引列表
         """
         indexlist = []
-        for i,p in enumerate(self.data.get("advancedCurveList")):
+        for i, p in enumerate(self.data.get("advancedCurveList")):
             if self._if_in_rectangle(p["startPos"]['pos'], rect):
                 if self._if_in_rectangle(p["endPos"]['pos'], rect):
                     if prefix:
@@ -173,7 +197,22 @@ class BeautifulSmap():
                         namelist.append(tuple(cur["instanceName"].split("-")))
         return namelist
 
-    def add_vertex(self, **kwargs):
+    def add_normal_vertex_line(self, start: tuple, end: tuple, num):
+        """增加点云"""
+        l1 = np.linspace(start[0], end[0], num, dtype=float)
+        l2 = np.linspace(start[1], end[1], num, dtype=float)
+        if self.data.get("normalPosList") is None:
+            self.data["normalPosList"] = []
+        for z in zip(l1, l2):
+            self.data["normalPosList"].append({'x': float(z[0]), 'y': float(z[1])})
+        self.write_flag = True
+
+    def del_normal_vertex(self):
+        """删除所有点云"""
+        self.data.pop("normalPosList")
+        self.write_flag = True
+
+    def add_pos(self, **kwargs):
         """ 增加点位, 不检查是否有重复点位
         :param kwargs:
             name: 点位名称, 符合调度名称规则 LM PP CP AP SM
@@ -188,8 +227,8 @@ class BeautifulSmap():
                 tem["instanceName"] = kwargs.get("name")
                 tem["pos"] = {"x": kwargs.get("coordinates")[0], "y": kwargs.get("coordinates")[1]}
                 if kwargs.get('dir'):
-                    tem.pop("ignoreDir",None)
-                    tem["dir"]=kwargs.get("dir")
+                    tem.pop("ignoreDir", None)
+                    tem["dir"] = kwargs.get("dir")
                 if kwargs.get('spin'):
                     for prop in tem.get("property", []):
                         if prop["key"] == "spin":
@@ -197,38 +236,65 @@ class BeautifulSmap():
                 self.write_flag = True
                 self.data["advancedPointList"].append(tem)
 
-    def delete_vertex(self,names: list = None):
+    def delete_pos(self, names: list = None):
         """删除点位
         """
-        # self.write_flag = True
-        if isinstance(names,str):
-            names=[names]
-        pos_len=len(self.data.get("advancedPointList"))
-        for i,v in enumerate(self.data.get("advancedPointList")[::-1]):
+        self.write_flag = True
+        if isinstance(names, str):
+            names = [names]
+        pos_len = len(self.data.get("advancedPointList"))
+        for i, v in enumerate(self.data.get("advancedPointList")[::-1]):
             if v["instanceName"] in names:
-                self.data.get("advancedPointList").pop(pos_len-i-1)
-        path_len=len(self.data.get("advancedCurveList"))
-        for i,cur in enumerate(self.data.get("advancedCurveList")[::-1]):
+                self.data.get("advancedPointList").pop(pos_len - i - 1)
+        if self.data.get("advancedCurveList") is None:
+            return
+        path_len = len(self.data.get("advancedCurveList"))
+        for i, cur in enumerate(self.data.get("advancedCurveList")[::-1]):
             if cur["startPos"]["instanceName"] in names:
-                self.data.get("advancedCurveList").pop(path_len-i-1)
+                self.data.get("advancedCurveList").pop(path_len - i - 1)
                 continue
             if cur["endPos"]["instanceName"] in names:
                 self.data.get("advancedCurveList").pop(path_len - i - 1)
+        if self.data.get("advancedCurveList") == []:
+            self.data.pop("advancedCurveList")
 
-    def update_trans(self, indexs: list = None, x=0, y=0):
-        """平移点位和线路"""
-        result = {}
-        if indexs is not None:
-            self.write_flag = True
-        for i in indexs:
+    def update_trans(self, rect: tuple = None, names: list = None, prefix: str = "", x=0, y=0):
+        """平移点位和线路
+        1. 如果rect不为空,平移矩形区域内所有点位和线路
+        2. names 不为空,所有点位 不考虑线路
+        :param rect:
+        :param names:
+        :param x:
+        :param y:
+        :return None
+        """
+        indps,rlt = [],[]
+        if rect is not None:
+            indps = self._get_pos_index_from_enclosure(rect,prefix)
+        else:
+            indps = self._get_pos_index_by_name(names)
+        for i in indps:
+            if i==-1:
+                continue
             self.data["advancedPointList"][i]["pos"]["x"] += x
             self.data["advancedPointList"][i]["pos"]["y"] += y
-            result.setdefault(self.data["advancedPointList"][i]["instanceName"], (
-                self.data["advancedPointList"][i]["pos"]["x"], self.data["advancedPointList"][i]["pos"]["y"]))
-        print(result)
-        return result
+            rlt.append(self.data["advancedPointList"][i]["instanceName"])
+        if rect is not None:
+            indps2 = self._get_path_index_from_enclosure(rect,prefix)
+            for i in indps2:
+                path=self.data["advancedCurveList"][i]
+                path["startPos"]["pos"]["x"]+=x
+                path["startPos"]["pos"]["y"]+=y
+                path["endPos"]["pos"]["y"]+=y
+                path["endPos"]["pos"]["y"]+=y
+                for c in path:
+                    if c.startswith("controlPos"):
+                        path[c]["x"]+=x
+                        path[c]["y"]+=y
+        self.write_flag = True
+        return rlt
 
-    def update_points(self):
+    def update_points(self,names):
         """"""
 
     def update_distribution_point(self, rect=None):
@@ -242,22 +308,22 @@ class BeautifulSmap():
             if rect[0] < self.data.get("advancedPointList")[i]["pos"]["x"] < rect[1] and rect[2] < \
                     self.data.get("advancedPointList")[i]["pos"]["y"] < rect[3]:
                 namelist.append(i)
-        print(namelist)
+        # print(namelist)
         namelist = sorted(namelist, key=lambda x: self.data["advancedPointList"][x]["pos"]["x"])
         minx = self.data["advancedPointList"][namelist[0]]["pos"]["x"]
         maxx = self.data["advancedPointList"][namelist[-1]]["pos"]["x"]
-        print(minx, maxx)
+        # print(minx, maxx)
         uniform_x = np.linspace(minx, maxx, len(namelist))
-        print(namelist)
-        print(uniform_x)
+        # print(namelist)
+        # print(uniform_x)
         for i, x in zip(namelist, uniform_x):
             self.data["advancedPointList"][i]["pos"]["x"] = float(x)
             rlt.setdefault(self.data["advancedPointList"][i]["instanceName"], (
                 self.data["advancedPointList"][i]["pos"]["x"], self.data["advancedPointList"][i]["pos"]["y"]))
-        print(rlt)
+        # print(rlt)
         return rlt
 
-    def update_lines(self, pos: dict = None):
+    def update_distribution_lines(self, pos: dict = None):
         """线路重新均匀分布
         """
         if pos is None:
@@ -281,38 +347,92 @@ class BeautifulSmap():
                 i["controlPos2"] = {"x": controlx[2], "y": controly[2]}
         return rlt
 
+    def update_curve(self,rect:list=None,names: list = None,prefix:str="",property:dict=None):
+        """"""
+        indps, rlt = [], []
+        if property:
+            return
+        if rect is not None:
+            indps = self._get_path_index_from_enclosure(rect, prefix)
+        else:
+            indps = self._get_pos_index_by_name(names)
+        for i in indps:
+            for pi,pro in enumerate(self.data["advancedCurveList"][i]["property"]):
+                if pro["key"] == property["key"]:
+                    self.data["advancedCurveList"][i]["property"][pi]=property
+                    break
+            else:
+                self.data["advancedCurveList"][i]["property"].append(property)
+
+
+
+        #
+        #     self.data["advancedPointList"][i]["pos"]["y"] += y
+        #     rlt.append(self.data["advancedPointList"][i]["instanceName"])
+        # if rect is not None:
+        #     indps2 = self._get_path_index_from_enclosure(rect, prefix)
+        #     for i in indps2:
+        #         path = self.data["advancedCurveList"][i]
+        #         path["startPos"]["pos"]["x"] += x
+        #         path["startPos"]["pos"]["y"] += y
+        #         path["endPos"]["pos"]["y"] += y
+        #         path["endPos"]["pos"]["y"] += y
+        #         for c in path:
+        #             if c.startswith("controlPos"):
+        #                 path[c]["x"] += x
+        #                 path[c]["y"] += y
+        # self.write_flag = True
+        # return rlt
+        #
+        # pass
+
     def strech(self, rect: list = None):
-        """线路和点位重新拉伸
+        """线路和点位重新拉伸,使得点位和线路均匀分布
         :param rect:(-x,x,-y,y)
         """
         pos = self.update_distribution_point(rect)
-        self.update_lines(pos)
+        self.update_distribution_lines(pos)
 
-    def demo2(self, a):
-        """
+    # def update_curve(self, names: list = None):
 
-        """
+    # def demo2(self, a):
+    #     """
+    #     """
 
 
 if __name__ == '__main__':
-
     path = r"D:\workshop\new_bug\2501\test_map.smap"
     tes = BeautifulSmap(path)
-    data1=json.dumps(tes.data)
-    # tes.delete_vertex(names=["PP2","AP3"])
-    data2=json.dumps(tes.data)
-    assert data1==data2
+    tes.update_curve()
+    # tes.update_trans(rect=(-68,-62,-40,-38),x=-10)
+    # tes.update_trans(rect=(-68,-62,-40,-38),x=-10)
+
+    # print(tes.add_normal_pos((-79, -40), (-79, -35), 80))
+    # print(json.dumps(tes.data['advancedCurveList'],indent=4))
+    # tes.delete_pos(names=['AP3'])
+    # a = [1, 2, 3, 4, 5, 6, 7]
+    # print(tes._ordered_sample(a, 10))
+    # print(json.dumps(tes.data['advancedCurveList'],indent=4))
+    # datat1=jso
+    # n.dumps(tes.data)
+    # tes.delete_pos(names=["AP3"])
+    # with open('test_map.', 'w') as f:
+    #     f.write(json.dumps(tes.data))
+    # print(tes)
+
+    # data2=json.dumps(tes.data)
+    # assert data1==data2
     # with open("tes_map2.py", "w") as f:
     #     f.write(json.dumps(tes.data,indent=4))
-    # tes.add_vertex(name="AP22",coordinates=(-80,-39),spin=True,dir=1,type="AP")
+    # tes.add_pos(name="AP22",coordinates=(-80,-39),spin=True,dir=1,type="AP")
     # print(tes._get_path_index_from_enclosure((-81,-77,-40,-36)))
     # print(tes.get_path_from_enclosure((-81,-77,-40,-36)))
     # tes._if_in_rectangle()
     # # print(json.dumps(tes.data,indent=4))
-    # print(tes.get_vertex_from_enclosure([-6.5, -4, 0.5, 2.4]))
-    # print(tes.get_vertex_from_enclosure([-6.5, -4, -1.4, 0.5]))
-    # print(tes.get_vertex_from_enclosure([-6.5, -4, -4, -2]))
-    # ids=tes.get_vertex_index_from_enclosure([-7, -4, 0.3, 2])
+    # print(tes.get_pos_from_enclosure([-6.5, -4, 0.5, 2.4]))
+    # print(tes.get_pos_from_enclosure([-6.5, -4, -1.4, 0.5]))
+    # print(tes.get_pos_from_enclosure([-6.5, -4, -4, -2]))
+    # ids=tes.get_pos_index_from_enclosure([-7, -4, 0.3, 2])
     # new=tes.update_trans(ids, -2, 0)
     # print(tes.update_lines(new))
 

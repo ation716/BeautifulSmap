@@ -76,6 +76,11 @@ class BeautifulSmap():
             rgb = colorsys.hsv_to_rgb(hue, saturation, brightness)
             colors.append(rgb)
         return colors
+    @staticmethod
+    def _get_tr(pos1,pos2):
+        """"""
+        p1,p2=pos1,pos2 if pos1[0]<pos2[0] else pos2,pos1
+        return ((2*p1[0]+p2[0])/3, (2*p1[1]+p2[1])/3),((p1[0]+2*p2[0])/3, (p1[1]+2*p2[1])/3),
 
     @staticmethod
     def _ordered_sample(data_list: list, k: int):
@@ -143,9 +148,11 @@ class BeautifulSmap():
             if self._if_in_rectangle(self.data.get("advancedPointList")[i]['pos'], rect):
                 if prefix:
                     if self.data.get("advancedPointList")[i]['instanceName'].startswith(prefix):
-                        indexlist.append(i)
+                        indexlist.append((i,self.data.get("advancedPointList")[i]['pos']['x']))
                 else:
-                    indexlist.append(i)
+                    indexlist.append((i,self.data.get("advancedPointList")[i]['pos']['x']))
+        print(indexlist)
+        sorted(indexlist,key=lambda x: x[1])
         return indexlist
 
     def get_pos_from_enclosure(self, rect: list = None, prefix=None):
@@ -235,6 +242,17 @@ class BeautifulSmap():
                             prop["boolValue"] = kwargs.get("spin")
                 self.write_flag = True
                 self.data["advancedPointList"].append(tem)
+
+    def add_path(self,rect: list = None):
+        """将点位从左到右串联起来"""
+        data={'className': 'DegenerateBezier', 'instanceName': 'SM5-LM1', 'startPos': {'instanceName': 'SM5', 'pos': {'x': -73.793, 'y': -39.401}}, 'endPos': {'instanceName': 'LM1', 'pos': {'x': -76.494, 'y': -39.292}}, 'controlPos1': {'x': -74.693, 'y': -39.365}, 'controlPos2': {'x': -75.594, 'y': -39.328}, 'property': [{'key': 'direction', 'type': 'int', 'value': 'MA==', 'int32Value': 0}, {'key': 'movestyle', 'type': 'int', 'value': 'MA==', 'int32Value': 0}]},
+        a=self._get_pos_index_from_enclosure(rect=rect)
+        for i in range(len(a)-1):
+            c1,c2=self._get_tr(self.data['advancedPointList'][i])
+            pass
+
+
+        pass
 
     def delete_pos(self, names: list = None):
         """删除点位
@@ -401,9 +419,14 @@ class BeautifulSmap():
 
 
 if __name__ == '__main__':
-    path = r"D:\workshop\new_bug\2501\test_map.smap"
+    path = r"D:\workshop\new_bug\test_map.smap"
     tes = BeautifulSmap(path)
-    tes.update_curve()
+    tes.add_path(rect=(-80,-72,-39,-36))
+    print(tes.data)
+    # print(tes._get_pos_index_from_enclosure(rect=(-48, -15, 7, 9)))
+    # print(tes.get_pos_from_enclosure(rect=(-48, -15, 7, 9)))
+    # tes.add_path(rect=(-48,-15,7,9))
+    # tes.update_curve()
     # tes.update_trans(rect=(-68,-62,-40,-38),x=-10)
     # tes.update_trans(rect=(-68,-62,-40,-38),x=-10)
 

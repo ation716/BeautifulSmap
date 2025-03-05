@@ -28,6 +28,7 @@ class BeautifulSmap():
     def __del__(self):
         """
         If modified, the source file will be overwritten.Then the file will be closed
+        调试模式下执行此段代码会出现异常
         """
         if self.write_flag:
             self.file.truncate(0)
@@ -42,7 +43,7 @@ class BeautifulSmap():
 
     @property
     def data(self):
-        """ smap data, json format """
+        """ smap 地图数据 数据格式为json """
         if self.__data is None:
             print("assign self.data")
             self.__data = json.load(self.file)
@@ -51,7 +52,7 @@ class BeautifulSmap():
 
     @staticmethod
     def _if_in_rectangle(pos: tuple, rect: tuple):
-        """
+        """ 判断 一个坐标是否处于矩形区域中
         :param pos: (x,y)
         :param rect: (-x,x,-y,y)
         :return bool
@@ -63,7 +64,7 @@ class BeautifulSmap():
 
     @staticmethod
     def _generate_random_colors(num_colors: int):
-        """
+        """  生成多个随机rgb颜色
         :param num_colors:
         :return list
         """
@@ -77,13 +78,18 @@ class BeautifulSmap():
             colors.append(rgb)
         return colors
     @staticmethod
-    def _get_tr(pos1,pos2):
-        """"""
-        p1,p2=pos1,pos2 if pos1[0]<pos2[0] else pos2,pos1
-        return ((2*p1[0]+p2[0])/3, (2*p1[1]+p2[1])/3),((p1[0]+2*p2[0])/3, (p1[1]+2*p2[1])/3),
+    def _get_trisection_point(pos1,pos2):
+        """
+        获取两个三等分点的, 返回三等分点，顺序按照传入顺序 pos1 1/3 2/3 pos2
+        :param pos1: 坐标
+        :param pos2: 坐标
+        :return tuple
+        """
+
+        return [{'x':(2*pos1['x']+pos2['x'])/3, 'y':(2*pos1['y']+pos2['y'])/3},{'x':(pos1['x']+2*pos2['x'])/3, 'y':(pos1['y']+2*pos2['y'])/3}]
 
     @staticmethod
-    def _ordered_sample(data_list: list, k: int):
+    def _get_ordered_sample(data_list: list, k: int):
         """在有序序列中随机选出长度为k的有序子集
         :param data_list: 有序序列
         :param k: 子集长度
@@ -94,7 +100,7 @@ class BeautifulSmap():
         return sample
 
     def get_pos_by_name(self, names: list):
-        """通过名字获取点位信息
+        """通过点位名字获取点位信息
         :param names: 点位名称表
         :return json：{name：{坐标：（），朝向：，随动：}}
         """
@@ -156,7 +162,7 @@ class BeautifulSmap():
         return indexlist
 
     def get_pos_from_enclosure(self, rect: list = None, prefix=None):
-        """获取矩形区域的所有点位, 点位为LM，AP，PP，CP，SM，不包含库位
+        """获取矩形区域的所有点位, 点位为LM，AP，PP，CP，SM，不包含库位,返回点位名
         :param rect: (-x,x,-y,y)
         :param prefix: 点位前缀,做筛选用
         :return 点位列表
@@ -190,7 +196,10 @@ class BeautifulSmap():
         return indexlist
 
     def get_path_from_enclosure(self, rect: list = None, prefix=None):
-        """
+        """获取矩形区域的所有线路,
+        :param rect: (-x,x,-y,y)
+        :param prefix: 点位前缀,做筛选用
+        :return 线路列表
         """
         namelist = []
         for cur in self.data.get("advancedCurveList"):
@@ -205,7 +214,7 @@ class BeautifulSmap():
         return namelist
 
     def add_normal_vertex_line(self, start: tuple, end: tuple, num):
-        """增加点云"""
+        """增加直线点云"""
         l1 = np.linspace(start[0], end[0], num, dtype=float)
         l2 = np.linspace(start[1], end[1], num, dtype=float)
         if self.data.get("normalPosList") is None:
@@ -243,16 +252,50 @@ class BeautifulSmap():
                 self.write_flag = True
                 self.data["advancedPointList"].append(tem)
 
-    def add_path(self,rect: list = None):
-        """将点位从左到右串联起来"""
-        data={'className': 'DegenerateBezier', 'instanceName': 'SM5-LM1', 'startPos': {'instanceName': 'SM5', 'pos': {'x': -73.793, 'y': -39.401}}, 'endPos': {'instanceName': 'LM1', 'pos': {'x': -76.494, 'y': -39.292}}, 'controlPos1': {'x': -74.693, 'y': -39.365}, 'controlPos2': {'x': -75.594, 'y': -39.328}, 'property': [{'key': 'direction', 'type': 'int', 'value': 'MA==', 'int32Value': 0}, {'key': 'movestyle', 'type': 'int', 'value': 'MA==', 'int32Value': 0}]},
-        a=self._get_pos_index_from_enclosure(rect=rect)
-        for i in range(len(a)-1):
-            c1,c2=self._get_tr(self.data['advancedPointList'][i])
-            pass
+    def add_path(self,pos1,pos2,path_type="DegenerateBezier",direction=0):
+        """增加线路
+        :pos1: 点位名或点位索引
+        :pos2: 点位名或点位索引
+        :path_type: 线路类型 默认高阶贝塞尔
+        :direction: 正倒走 0正走 1倒走
+        """
+        if isinstance(pos1,str):
+            pos1=self._get_pos_index_by_name([pos1])[0]
+            p1_data = self.data['advancedPointList'][pos1]
+        else:
+            p1_data=self.data['advancedPointList'][pos1]
+        if isinstance(pos2,str):
+            pos2 = self._get_pos_index_by_name([pos2])[0]
+        else:
+            p2_data=self.data['advancedPointList'][pos2]
+        path=cg.pmodel.get(path_type)
+        path["instanceName"] = f"{p1_data['instanceName']}-{p2_data['instanceName']}"
+        path["startPos"] = {"instanceName": p1_data["instanceName"],"pos":p1_data['pos']}
+        path["endPos"] = {"instanceName": p2_data["instanceName"],"pos":p2_data['pos']}
+        path['controlPos1'],path['controlPos2']=self._get_trisection_point(p1_data['pos'],p2_data['pos'])
+        path['property'][0]['ini32Value']=direction
 
+        self.data['advancedCurveList'].append(path)
 
-        pass
+        self.write_flag = True
+        return
+
+        # tem={'className': 'DegenerateBezier', 'instanceName': 'SM5-LM1', 'startPos': {'instanceName': 'SM5', 'pos': {'x': -73.793, 'y': -39.401}}, 'endPos': {'instanceName': 'LM1', 'pos': {'x': -76.494, 'y': -39.292}}, 'controlPos1': {'x': -74.693, 'y': -39.365}, 'controlPos2': {'x': -75.594, 'y': -39.328}, 'property': [{'key': 'direction', 'type': 'int', 'value': 'MA==', 'int32Value': 0}, {'key': 'movestyle', 'type': 'int', 'value': 'MA==', 'int32Value': 0}]}
+        # a=self._get_pos_index_from_enclosure(rect=rect)
+        # if len(a)<2:
+        #     return
+        # for i in range(len(a)-1):
+        #     pos1=(self.data['advancedPointList'][i]['pos']['x'],self.data['advancedPointList'][i]['pos']['y'])
+        #     pos2=(self.data['advancedPointList'][i+1]['pos']['x'],self.data['advancedPointList'][i+1]['pos']['y'])
+        #     c1,c2 = self._get_tr(pos1,pos2)
+        #     tem['instanceName']=f"{self.data['advancedPointList'][i]['instanceName']}-{self.data['advancedPointList'][i+1]['instanceName']}"
+        #     tem['startPos']={'instanceName': self.data['advancedPointList'][i]['instanceName'], 'pos': self.data['advancedPointList'][i]['pos']}
+        #     tem['endPos']={'instanceName': self.data['advancedPointList'][i+1]['instanceName'], 'pos': self.data['advancedPointList'][i+1]['pos']}
+        #     tem['controlPos1']={'x':c1[0],'y':c1[1]}
+        #     tem['controlPos2']={'x':c2[0],'y':c2[1]}
+        #     tem['endPos']={'instanceName': self.data['advancedPointList'][i+1]['instanceName'], 'pos': self.data['advancedPointList'][i+1]['pos']}
+        #     self.data['advancedCurveList'].append(tem)
+        # self.write_flag = True
 
     def delete_pos(self, names: list = None):
         """删除点位
@@ -276,7 +319,7 @@ class BeautifulSmap():
         if self.data.get("advancedCurveList") == []:
             self.data.pop("advancedCurveList")
 
-    def update_trans(self, rect: tuple = None, names: list = None, prefix: str = "", x=0, y=0):
+    def translation(self, rect: tuple = None, names: list = None, prefix: str = "", x=0, y=0):
         """平移点位和线路
         1. 如果rect不为空,平移矩形区域内所有点位和线路
         2. names 不为空,所有点位 不考虑线路
@@ -313,10 +356,12 @@ class BeautifulSmap():
         return rlt
 
     def update_points(self,names):
-        """"""
+        """
+        修改点位
+        """
 
     def update_distribution_point(self, rect=None):
-        """点位重新均匀分布
+        """点位重新均匀分布（将一个间距不等的点位修改成间距相等）
         :return {name:（x,y）}
         """
         namelist = []
@@ -366,7 +411,9 @@ class BeautifulSmap():
         return rlt
 
     def update_curve(self,rect:list=None,names: list = None,prefix:str="",property:dict=None):
-        """"""
+        """
+        修改线路属性
+        """
         indps, rlt = [], []
         if property:
             return
@@ -382,27 +429,11 @@ class BeautifulSmap():
             else:
                 self.data["advancedCurveList"][i]["property"].append(property)
 
+    def update_origin(self):
+        """更新原点坐标"""
 
 
-        #
-        #     self.data["advancedPointList"][i]["pos"]["y"] += y
-        #     rlt.append(self.data["advancedPointList"][i]["instanceName"])
-        # if rect is not None:
-        #     indps2 = self._get_path_index_from_enclosure(rect, prefix)
-        #     for i in indps2:
-        #         path = self.data["advancedCurveList"][i]
-        #         path["startPos"]["pos"]["x"] += x
-        #         path["startPos"]["pos"]["y"] += y
-        #         path["endPos"]["pos"]["y"] += y
-        #         path["endPos"]["pos"]["y"] += y
-        #         for c in path:
-        #             if c.startswith("controlPos"):
-        #                 path[c]["x"] += x
-        #                 path[c]["y"] += y
-        # self.write_flag = True
-        # return rlt
-        #
-        # pass
+
 
     def strech(self, rect: list = None):
         """线路和点位重新拉伸,使得点位和线路均匀分布
@@ -419,10 +450,12 @@ class BeautifulSmap():
 
 
 if __name__ == '__main__':
-    path = r"D:\workshop\new_bug\test_map.smap"
+    path = r"C:\Users\seer\Desktop\test_map_1.smap"
     tes = BeautifulSmap(path)
-    tes.add_path(rect=(-80,-72,-39,-36))
-    print(tes.data)
+    tes.add_path(1,3, "DegenerateBezier")
+    # print(json.dumps(tes.data,indent=4))
+    # pass
+    # print(tes.data)
     # print(tes._get_pos_index_from_enclosure(rect=(-48, -15, 7, 9)))
     # print(tes.get_pos_from_enclosure(rect=(-48, -15, 7, 9)))
     # tes.add_path(rect=(-48,-15,7,9))
